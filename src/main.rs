@@ -1,3 +1,4 @@
+use fasthash::sea;
 use std::collections::HashSet;
 use std::time::Instant;
 use std::u8;
@@ -67,7 +68,7 @@ fn u8_to_command(byte: usize) -> Command {
 }
 */
 
-type StateTuple = (usize, [usize; N_LOCS]);
+//type StateTuple = (usize, [usize; N_LOCS]);
 
 // pc, a, carry, zero
 // N_BITS + N_BITS + 1 + 1
@@ -84,103 +85,76 @@ struct State {
     zero: bool,
 }
 
-impl State {
-    pub fn new_raw(u8_mem: [usize; N_LOCS]) -> State {
-        State {
-            pc: 0,
-            a: 0,
-            mem: u8_mem,
-            carry: false,
-            zero: true,
-        }
-    }
+fn iter_until_halt_or_loop(mut mem: [usize; N_LOCS]) -> Result<usize, usize> {
+    //let mut seen_quick = HashSet::new();
+    let mut seen_states = HashSet::with_hasher(sea::Hash64);
 
-    /// Returns the next state
-    pub fn iter_until_halt_or_loop(
-        self: &Self,
-        _seen_states: &mut HashSet<StateTuple>,
-    ) -> Result<usize, usize> {
-        //let mut seen_quick = HashSet::new();
-        let mut seen_states = HashSet::new();
+    let mut pc = 0;
+    let mut a = 0;
+    let mut carry = false;
+    let mut zero = false;
 
-        let mut pc = self.pc;
-        let mut a = self.a;
-        let mut mem = self.mem;
-        let mut carry = self.carry;
-        let mut zero = self.zero;
+    let mut count = 0;
 
-        let mut count = 0;
-
-        loop {
-            let op = mem[pc] >> 4;
-            let operand = mem[pc] & 0x0F;
-
-            let mut quick_hash = (pc << 16) + (a << 8);
-            if carry {
-                quick_hash += 2;
-            }
-            if zero {
-                quick_hash += 1;
-            }
-
-            //if seen_quick.contains(&quick_hash) {
-            let state_tuple = (quick_hash, mem);
+    loop {
+        if count % 32 == 0 {
+            let state_tuple = (pc, a, carry, zero, mem);
             if seen_states.contains(&state_tuple) {
                 return Err(count);
             }
             seen_states.insert(state_tuple);
-            //}
-            //seen_quick.insert(quick_hash);
+        }
 
-            count += 1;
+        count += 1;
+        let op = mem[pc] >> 4;
+        let operand = mem[pc] & 0x0F;
 
-            pc += 1;
+        pc += 1;
 
-            match op as usize {
-                1 => a = mem[operand & LOC_MASK],
-                2 => {
-                    a += mem[operand & LOC_MASK];
-                    carry = a > 255;
+        match op as usize {
+            1 => a = mem[operand & LOC_MASK],
+            2 => {
+                a += mem[operand & LOC_MASK];
+                carry = a > 255;
 
-                    a = a & BIT_MASK;
-                    zero = a == 0;
-                }
-
-                3 => {
-                    a += 256 - mem[operand & LOC_MASK];
-                    carry = a > 255;
-                    a = a & BIT_MASK;
-                    zero = a == 0;
-                }
-                4 => mem[operand & LOC_MASK] = a,
-                5 => a = operand,
-                6 => pc = operand,
-                7 => {
-                    if carry {
-                        pc = operand
-                    }
-                }
-                8 => {
-                    if zero {
-                        pc = operand
-                    }
-                }
-                15 => break,
-                _ => (),
+                a = a & BIT_MASK;
+                zero = a == 0;
             }
 
-            //let a = (a % (1 << 8)) as i8;
-            //let pc = pc % N_LOCS;
-            pc = pc & LOC_MASK;
+            3 => {
+                a += 256 - mem[operand & LOC_MASK];
+                carry = a > 255;
+                a = a & BIT_MASK;
+                zero = a == 0;
+            }
+            4 => mem[operand & LOC_MASK] = a,
+            5 => a = operand,
+            6 => pc = operand,
+            7 => {
+                if carry {
+                    pc = operand
+                }
+            }
+            8 => {
+                if zero {
+                    pc = operand
+                }
+            }
+            15 => break,
+            _ => (),
         }
-        Ok(count)
+
+        //let a = (a % (1 << 8)) as i8;
+        //let pc = pc % N_LOCS;
+        pc = pc & LOC_MASK;
     }
+    Ok(count)
 }
 
 fn i_to_mem(mem_int: u128) -> [usize; N_LOCS] {
     let mut mem = [1; N_LOCS];
     for i in 0..N_LOCS {
-        mem[(i) % N_LOCS] = ((mem_int >> (8 * i)) + 1 + (6 << 4)) as usize & BIT_MASK;
+        mem[(i + 1) % N_LOCS] = ((mem_int >> (8 * i)) + 1) as usize & BIT_MASK;
     }
 
     mem
@@ -195,16 +169,15 @@ fn main() {
     let mut cur_max_loop_mem = [0; N_LOCS];
 
     let max_mem: u128 = 1 << (N_LOCS * 8);
-    //let test_mem = max_mem >> 13;
-    let test_mem = max_mem;
+    let test_mem = max_mem >> 13;
+    //let test_mem = 1_000_000;
 
     let start = Instant::now();
-    let mut seen_states = HashSet::new();
     for mem_int in 1..test_mem {
         let m = i_to_mem(mem_int);
+        //let m: [usize; N_LOCS] = mem_int.to_le_bytes();
 
-        let s = State::new_raw(m);
-        let count = s.iter_until_halt_or_loop(&mut seen_states);
+        let count = iter_until_halt_or_loop(m);
 
         if let Ok(c) = count {
             if c > cur_max {
@@ -225,12 +198,14 @@ fn main() {
                 cur_max_loop = c;
                 cur_max_loop_mem = m;
 
-                println!();
-                println!("Loop {} with mem {:?},", cur_max_loop, cur_max_loop_mem,);
-                for v in cur_max_loop_mem.iter() {
-                    print!("{:02x}", v);
+                if false {
+                    println!();
+                    println!("Loop {} with mem {:?},", cur_max_loop, cur_max_loop_mem,);
+                    for v in cur_max_loop_mem.iter() {
+                        print!("{:02x}", v);
+                    }
+                    println!();
                 }
-                println!();
             }
             tot_counts += c;
         }
@@ -276,10 +251,8 @@ mod test {
 
     fn run_mem(mem_str: &str) -> usize {
         let mem_raw = hex_str_to_mem(mem_str).unwrap();
-        let s = State::new_raw(mem_raw);
 
-        let mut states = HashSet::new();
-        s.iter_until_halt_or_loop(&mut states).unwrap()
+        iter_until_halt_or_loop(mem_raw).unwrap()
     }
 
     fn hex_str_to_mem(s: &str) -> Result<[usize; N_LOCS], ()> {

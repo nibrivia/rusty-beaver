@@ -11,3 +11,4 @@ debug = true
 
 
 [dependencies]
+fasthash = "0.4"

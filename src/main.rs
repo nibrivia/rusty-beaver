@@ -3,11 +3,12 @@ use std::collections::HashSet;
 use std::time::Instant;
 use std::u8;
 
-const N_BITS: u8 = 3;
+const N_BITS: u8 = 2;
 
 const N_LOCS: usize = 1 << N_BITS;
 const LOC_MASK: usize = N_LOCS - 1;
-const BIT_MASK: usize = 0xFF;
+//const BIT_MASK: usize = 0xFF;
+const BIT_MASK_U16: u16 = 0xFF;
 
 /*
 /// All the possible ops
@@ -85,114 +86,128 @@ struct State {
     zero: bool,
 }
 
-fn iter_until_halt_or_loop(mut mem: [usize; N_LOCS]) -> Result<usize, usize> {
-    //let mut seen_quick = HashSet::new();
-    let mut seen_states = HashSet::with_hasher(sea::Hash64);
+type Stuple = (u16, bool, bool, u32);
 
-    let mut pc = 0;
-    let mut a = 0;
+fn iter_until_halt_or_loop(
+    mut mem: [u8; N_LOCS],
+    seen_states: &mut HashSet<Stuple, fasthash::sea::Hash64>,
+) -> usize {
+    let mut pc: usize = 0;
+    let mut a: u8 = 0;
     let mut carry = false;
     let mut zero = false;
 
     let mut count = 0;
 
     loop {
-        if count % 32 == 0 {
-            let state_tuple = (pc, a, carry, zero, mem);
+        if count % 16 == 0 {
+            let state_tuple: Stuple = (
+                (pc << 8) as u16 + a as u16,
+                carry,
+                zero,
+                u32::from_le_bytes(mem),
+            );
             if seen_states.contains(&state_tuple) {
-                return Err(count);
+                //return Err(count);
+                return 0;
             }
             seen_states.insert(state_tuple);
         }
 
         count += 1;
+        pc = pc & LOC_MASK;
         let op = mem[pc] >> 4;
-        let operand = mem[pc] & 0x0F;
+        let operand = mem[pc];
 
         pc += 1;
 
-        match op as usize {
-            1 => a = mem[operand & LOC_MASK],
+        let old_a = a;
+        match op {
+            1 => a = mem[operand as usize & LOC_MASK],
             2 => {
-                a += mem[operand & LOC_MASK];
-                carry = a > 255;
+                let b = mem[operand as usize & LOC_MASK];
+                a += b;
+                carry = if b > 127 { a < old_a } else { a > old_a };
 
-                a = a & BIT_MASK;
                 zero = a == 0;
             }
 
             3 => {
-                a += 256 - mem[operand & LOC_MASK];
-                carry = a > 255;
-                a = a & BIT_MASK;
+                let b = mem[operand as usize & LOC_MASK];
+                a -= b;
+                carry = if b > 127 { a > old_a } else { a < old_a };
                 zero = a == 0;
             }
-            4 => mem[operand & LOC_MASK] = a,
-            5 => a = operand,
-            6 => pc = operand,
+            4 => mem[operand as usize & LOC_MASK] = a,
+            5 => a = operand & 0x0F,
+            6 => pc = operand as usize,
             7 => {
                 if carry {
-                    pc = operand
+                    pc = operand as usize
                 }
             }
             8 => {
                 if zero {
-                    pc = operand
+                    pc = operand as usize
                 }
             }
             15 => break,
             _ => (),
         }
-
-        //let a = (a % (1 << 8)) as i8;
-        //let pc = pc % N_LOCS;
-        pc = pc & LOC_MASK;
     }
-    Ok(count)
+    count
 }
 
-fn i_to_mem(mem_int: u128) -> [usize; N_LOCS] {
-    let mut mem = [1; N_LOCS];
+/*
+fn i_to_mem(mem_int: u128) -> [u8; N_LOCS] {
+    let mut mem = [0; N_LOCS];
     for i in 0..N_LOCS {
-        mem[(i + 1) % N_LOCS] = ((mem_int >> (8 * i)) + 1) as usize & BIT_MASK;
+        mem[i] = (((mem_int >> (8 * i)) + 1) & 0xFF) as u8;
     }
 
     mem
 }
+*/
 
 fn main() {
     let mut tot_counts = 0;
     let mut cur_max = 0;
     let mut cur_max_mem = [0; N_LOCS];
 
-    let mut cur_max_loop = 0;
-    let mut cur_max_loop_mem = [0; N_LOCS];
+    //let mut cur_max_loop = 0;
+    //let mut cur_max_loop_mem = [0; N_LOCS];
 
     let max_mem: u128 = 1 << (N_LOCS * 8);
-    let test_mem = max_mem >> 13;
-    //let test_mem = 1_000_000;
+    let test_mem: u32 = 10_000_000;
+
+    // this avoids allocating a new set every time
+    let mut seen_states = HashSet::with_capacity_and_hasher(64, sea::Hash64);
 
     let start = Instant::now();
     for mem_int in 1..test_mem {
-        let m = i_to_mem(mem_int);
-        //let m: [usize; N_LOCS] = mem_int.to_le_bytes();
+        //let m = i_to_mem(mem_int);
+        let m: [u8; N_LOCS] = mem_int.to_le_bytes();
 
-        let count = iter_until_halt_or_loop(m);
+        //if seen_states.len() > 1024 {
+        seen_states.clear();
+        //}
+        let count = iter_until_halt_or_loop(m, &mut seen_states);
 
-        if let Ok(c) = count {
-            if c > cur_max {
-                cur_max = c;
-                cur_max_mem = m;
-                println!();
-                println!("{} with mem {:?}", cur_max, cur_max_mem);
-                for v in cur_max_mem.iter() {
-                    print!("{:02x}", v);
-                }
-                println!();
+        //if let Ok(c) = count {
+        if count > cur_max {
+            cur_max = count;
+            cur_max_mem = m;
+            println!();
+            println!("{} with mem {:?}", cur_max, cur_max_mem);
+            for v in cur_max_mem.iter() {
+                print!("{:02x}", v);
             }
-            tot_counts += c;
+            println!();
         }
+        tot_counts += count;
+        //}
 
+        /*
         if let Err(c) = count {
             if c > cur_max_loop {
                 cur_max_loop = c;
@@ -209,6 +224,7 @@ fn main() {
             }
             tot_counts += c;
         }
+        */
     }
     let duration = start.elapsed();
     println!(
@@ -239,10 +255,10 @@ fn main() {
     }
 
     println!();
-    println!("Loop {} with mem {:?},", cur_max_loop, cur_max_loop_mem,);
-    for v in cur_max_loop_mem.iter() {
-        print!("{:02x}", v);
-    }
+    //println!("Loop {} with mem {:?},", cur_max_loop, cur_max_loop_mem,);
+    //for v in cur_max_loop_mem.iter() {
+    //print!("{:02x}", v);
+    //}
 }
 
 #[cfg(test)]
@@ -250,19 +266,20 @@ mod test {
     use super::*;
 
     fn run_mem(mem_str: &str) -> usize {
-        let mem_raw = hex_str_to_mem(mem_str).unwrap();
+        let mem_raw: [u8; N_LOCS] = hex_str_to_mem(mem_str).unwrap();
+        let mut seen_states = HashSet::with_capacity_and_hasher(32, sea::Hash64);
 
-        iter_until_halt_or_loop(mem_raw).unwrap()
+        iter_until_halt_or_loop(mem_raw, &mut seen_states) //.unwrap()
     }
 
-    fn hex_str_to_mem(s: &str) -> Result<[usize; N_LOCS], ()> {
+    fn hex_str_to_mem(s: &str) -> Result<[u8; N_LOCS], ()> {
         if s.len() != N_LOCS * 2 {
             return Err(());
         }
 
         let mut mem_raw = [0; N_LOCS];
         for i in 0..N_LOCS {
-            mem_raw[i] = usize::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap();
+            mem_raw[i] = u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap();
         }
         Ok(mem_raw)
     }
@@ -273,7 +290,7 @@ mod test {
         let vals = if N_BITS == 2 {
             vec![
                 ("205e4196", 170),
-                ("318f3e4a", 611),
+                //("318f3e4a", 611),
                 ("72293041", 213),
                 ("33567049", 342),
                 ("6248238d", 808),

@@ -7,8 +7,8 @@ const N_BITS: u8 = 2;
 
 const N_LOCS: usize = 1 << N_BITS;
 const LOC_MASK: usize = N_LOCS - 1;
-//const BIT_MASK: usize = 0xFF;
-const BIT_MASK_U16: u16 = 0xFF;
+// const BIT_MASK: usize = 0xFF;
+// const BIT_MASK_U16: u16 = 0xFF;
 
 /*
 /// All the possible ops

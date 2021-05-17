@@ -178,13 +178,16 @@ fn main() {
     //let mut cur_max_loop_mem = [0; N_LOCS];
 
     let max_mem: u128 = 1 << (N_LOCS * 8);
-    let test_mem: u32 = 10_000_000;
+    let test_mem = max_mem;
+    //let test_mem = max_mem;
 
     // this avoids allocating a new set every time
     let mut seen_states = HashSet::with_capacity_and_hasher(64, sea::Hash64);
 
     let start = Instant::now();
-    for mem_int in 1..test_mem {
+    //for mem_int in 1..test_mem {
+    let mut mem_int: u32 = 1;
+    while mem_int > 0 {
         //let m = i_to_mem(mem_int);
         let m: [u8; N_LOCS] = mem_int.to_le_bytes();
 
@@ -225,6 +228,7 @@ fn main() {
             tot_counts += c;
         }
         */
+        mem_int += 1;
     }
     let duration = start.elapsed();
     println!(
